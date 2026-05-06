@@ -14,21 +14,21 @@ cmake --build build -j
 ./build/bin/datalang example/shopping_test.dl
 ```
 
-## Example:
+## Examples:
 ```
-CREATE TABLE items(id INTEGER, name VARCHAR, category VARCHAR, price INTEGER, in_stock BOOLEAN);
-INSERT INTO items VALUES
-(1, 'Milk', 'food', 2, true),
-(2, 'Bread', 'food', 3, true),
-(3, 'Headphones', 'electronics', 50, false),
-(4, 'Bananas', 'food', 1, true),
-(5, 'Keyboard', 'electronics', 80, true);
+-- variable example
+let files = SELECT * FROM (VALUES 
+    (1, '2021/05/currency', 10), 
+    (2, '2024/11/language', 20)) 
+    files(id, name, howmany);
 
-CREATE TABLE cart(id INTEGER, name VARCHAR, price INTEGER);
-CREATE TABLE skipped(id INTEGER, reason VARCHAR);
+-- loop example
+for f in files:
+    SELECT * FROM read_csv('https://cdn.wsform.com/wp-content/uploads/{{f.name}}.csv') LIMIT f.howmany
 
 let food_items = SELECT id, name, price, in_stock FROM items WHERE category = 'food';
 
+-- if else
 for i in food_items:
     let item = SELECT * FROM items WHERE id = i.id;
     
