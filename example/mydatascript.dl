@@ -1,0 +1,25 @@
+# create sample data
+CREATE TABLE puzzles(id INTEGER, active BOOLEAN);
+INSERT INTO puzzles VALUES (1, true), (2, false), (3, true);
+
+CREATE TABLE arc_data(puzzle_id INTEGER, pixels INTEGER);
+INSERT INTO arc_data VALUES (1, 10), (1, 20), (3, 5);
+
+CREATE TABLE results(id INTEGER, pixels INTEGER);
+CREATE TABLE skipped(id INTEGER, reason VARCHAR);
+
+# DSL starts here
+let puzzles = SELECT id FROM puzzles WHERE active = true;
+
+for p in puzzles:
+    let groups = SELECT puzzle_id AS id, pixels FROM arc_data WHERE puzzle_id = p.id;
+
+    if (SELECT count(*) FROM groups):
+        INSERT INTO results SELECT * FROM groups;
+    else:
+        INSERT INTO skipped VALUES (p.id, 'no_groups');
+
+import "graph.dl";
+
+for p in puzzles:
+    process_puzzle(p)
