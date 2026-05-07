@@ -80,7 +80,8 @@ std::string Interpreter::resolve(const std::string& sql, const Env& env) {
     return replaceEnvVars(replaceAll(sql, env));
 }
 
-bool Interpreter::isFunctionCall(const std::string& sql, std::string& fn_name) {
+bool Interpreter::isFunctionCall(const std::string& sql, std::string& fn_name,
+                                  std::vector<std::string>& args) {
     std::string t = trim(sql);
     if (t.empty()) return false;
     if (t.back() == ';') t.pop_back();
@@ -95,9 +96,30 @@ bool Interpreter::isFunctionCall(const std::string& sql, std::string& fn_name) {
 
     fn_name = trim(t.substr(0, lparen));
     if (fn_name.empty()) return false;
-
     for (char c : fn_name) {
         if (!std::isalnum((unsigned char)c) && c != '_') return false;
+    }
+
+    // Split arguments by top-level commas (respecting nested parens and quotes).
+    std::string inner = t.substr(lparen + 1, rparen - lparen - 1);
+    args.clear();
+    if (!trim(inner).empty()) {
+        int depth = 0;
+        bool in_single = false, in_double = false;
+        std::string current;
+        for (char c : inner) {
+            if (c == '\'' && !in_double) { in_single = !in_single; current += c; }
+            else if (c == '"' && !in_single) { in_double = !in_double; current += c; }
+            else if (!in_single && !in_double) {
+                if (c == '(') { depth++; current += c; }
+                else if (c == ')') { depth--; current += c; }
+                else if (c == ',' && depth == 0) {
+                    args.push_back(trim(current));
+                    current.clear();
+                } else { current += c; }
+            } else { current += c; }
+        }
+        if (!trim(current).empty()) args.push_back(trim(current));
     }
     return true;
 }
@@ -185,14 +207,74 @@ void Interpreter::exec(const FnStmt& s, Env& env) {
 // Nested function calls (let x = inner()) have their CTEs merged in,
 // producing a flat single WITH chain in the returned FnResult.
 
-FnResult Interpreter::execFn(const FnStmt& fn, Env env) {
+FnResult Interpreter::execFn(const FnStmt& fn, Env env,
+                              const std::vector<std::string>& args) {
     FnResult result;
 
-    // Push a new val scope. Any val statements in this function body
-    // will register their __val_{depth}_{name} tables here, and they
-    // will all be dropped when we return — even on early exit paths.
     fn_depth++;
     val_scopes.push_back({});
+
+    // Validate arity up front
+    if (args.size() != fn.params.size()) {
+        std::cerr << red("error: ") << loc() << "fn " << fn.name
+                  << " expects " << fn.params.size()
+                  << " args, got " << args.size() << "\n";
+        if (args.size() < fn.params.size()) {
+            val_scopes.pop_back(); fn_depth--;
+            return result;
+        }
+    }
+
+    // Bind arguments to parameter names via SET VARIABLE.
+    // Two important subtleties:
+    //
+    // 1. DEFERRED RESET: param variables are added to result.vars_to_reset
+    //    rather than val_scopes, so they survive until the caller has finished
+    //    materializing the returned CTE chain. The caller resets them after.
+    //
+    // 2. NO DOUBLE-SUBSTITUTION: args[i] may already be a getvariable() call
+    //    (when an outer-scope val is passed as an arg). We detect this and pass
+    //    it through directly instead of running resolve() which would match the
+    //    variable name inside the string literal and double-wrap it.
+    for (size_t i = 0; i < fn.params.size() && i < args.size(); i++) {
+        const std::string& param = fn.params[i];
+        const std::string& raw_arg = args[i];
+
+        // If the arg is already a getvariable() reference from an outer val,
+        // use it directly — no resolve() to avoid matching inside the string.
+        std::string expr;
+        std::string trimmed = trim(raw_arg);
+        if (trimmed.rfind("getvariable(", 0) == 0) {
+            expr = trimmed;  // already resolved, pass through as-is
+        } else {
+            expr = resolve(raw_arg, env);  // substitute outer-scope vars
+        }
+
+        std::string upper = expr;
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                       [](unsigned char c){ return std::toupper(c); });
+        std::string value_expr;
+        if (upper.rfind("SELECT", 0) == 0 || upper.rfind("WITH", 0) == 0) {
+            value_expr = "(" + expr + ")";
+        } else if (upper.find(" FROM ") != std::string::npos) {
+            value_expr = "(SELECT " + expr + ")";
+        } else if (upper.rfind("GETVARIABLE(", 0) == 0) {
+            value_expr = "(" + expr + ")";  // already a scalar call
+        } else {
+            value_expr = "(SELECT (" + expr + "))";
+        }
+
+        std::string varname = "__val_" + std::to_string(fn_depth) + "_" + param;
+        std::string err = dbExec("SET VARIABLE " + varname + " = " + value_expr);
+        if (!err.empty()) {
+            std::cerr << red("error: ") << loc()
+                      << "fn " << fn.name << " param " << param << ": " << err << "\n";
+        } else {
+            result.vars_to_reset.push_back(varname);  // defer, not val_scopes
+            env[param] = "getvariable('" + varname + "')";
+            if (verbose) std::cout << dim("  param " + param + " = " + raw_arg) << "\n";
+        }
+    }
 
     for (auto& n : fn.body) {
         current_line = n->line_no;
@@ -200,9 +282,9 @@ FnResult Interpreter::execFn(const FnStmt& fn, Env env) {
         if (auto* let = std::get_if<LetStmt>(&n->node)) {
             std::string sql = trim(resolve(let->sql, env));
 
-            std::string inner_fn;
-            if (isFunctionCall(sql, inner_fn) && functions.count(inner_fn)) {
-                FnResult inner = execFn(functions[inner_fn], env);
+            std::string inner_fn; std::vector<std::string> inner_args;
+            if (isFunctionCall(sql, inner_fn, inner_args) && functions.count(inner_fn)) {
+                FnResult inner = execFn(functions[inner_fn], env, inner_args);
                 for (auto& cte : inner.ctes) result.ctes.push_back(cte);
                 if (!inner.select.empty())
                     result.ctes.push_back({let->name, inner.select});
@@ -247,13 +329,14 @@ FnResult Interpreter::execFn(const FnStmt& fn, Env env) {
 void Interpreter::exec(const LetStmt& s, Env& env) {
     std::string sql = trim(resolve(s.sql, env));
 
-    std::string fn_name;
-    if (isFunctionCall(sql, fn_name) && functions.count(fn_name)) {
-        FnResult r = execFn(functions[fn_name], env);
+    std::string fn_name; std::vector<std::string> fn_args;
+    if (isFunctionCall(sql, fn_name, fn_args) && functions.count(fn_name)) {
+        FnResult r = execFn(functions[fn_name], env, fn_args);
         std::string built = r.build();
         if (!built.empty()) {
             std::string full = "CREATE OR REPLACE TEMP TABLE " + s.name + " AS (" + built + ")";
             std::string err = dbExec(full);
+            for (auto& v : r.vars_to_reset) dbExec("RESET VARIABLE " + v);
             if (!err.empty()) {
                 std::cerr << red("error: ") << loc() << "let " << s.name << " = " << fn_name << "(): " << err << "\n";
                 return;
@@ -322,8 +405,10 @@ void Interpreter::exec(const ValStmt& s, Env& env) {
     env[s.name] = "getvariable('" + varname + "')";
 
     if (verbose) {
+        // Use CAST to VARCHAR so any type — including arrays, structs, maps —
+        // renders correctly. duckdb_value_varchar only handles scalar types.
         duckdb_result res;
-        dbExec("SELECT getvariable('" + varname + "')", &res);
+        dbExec("SELECT CAST(getvariable('" + varname + "') AS VARCHAR)", &res);
         char* v = duckdb_value_varchar(&res, 0, 0);
         std::cout << dim("✓ val " + s.name + " = " + (v ? v : "NULL")) << "\n";
         if (v) duckdb_free(v);
@@ -437,7 +522,8 @@ void Interpreter::exec(const PrintStmt& s, Env& env) {
     //   →  SELECT ('total: ' || getvariable('__val_0_order_count'))
     {
         duckdb_result res;
-        std::string err = dbExec("SELECT (" + text + ")", &res);
+        // Wrap in CAST(... AS VARCHAR) so arrays, structs, maps all render.
+        std::string err = dbExec("SELECT CAST((" + text + ") AS VARCHAR)", &res);
         if (!err.empty()) {
             // Not a SQL expression — just print the raw text.
             std::cout << text << "\n";
@@ -485,11 +571,26 @@ void Interpreter::exec(const SQLStmt& s, Env& env) {
     std::string sql = trim(resolve(s.sql, env));
     if (sql.empty()) return;
 
+    // Bare table name shorthand: a single plain identifier (letters, digits, _)
+    // with no spaces is treated as SELECT * FROM name. Lets you write:
+    //   let result = fn()
+    //   result          ← prints the table
+    {
+        std::string t = sql;
+        if (!t.empty() && t.back() == ';') t.pop_back();
+        t = trim(t);
+        bool is_ident = !t.empty();
+        for (char c : t) {
+            if (!std::isalnum((unsigned char)c) && c != '_') { is_ident = false; break; }
+        }
+        if (is_ident) sql = "SELECT * FROM " + t;
+    }
+
     // Standalone function call
-    std::string fn_name;
-    if (isFunctionCall(sql, fn_name) && functions.count(fn_name)) {
+    std::string fn_name; std::vector<std::string> fn_args;
+    if (isFunctionCall(sql, fn_name, fn_args) && functions.count(fn_name)) {
         if (verbose) std::cout << dim("→ calling " + fn_name + "()") << "\n";
-        FnResult r = execFn(functions[fn_name], env);
+        FnResult r = execFn(functions[fn_name], env, fn_args);
         std::string built = r.build();
         if (built.empty()) return;
 
@@ -497,6 +598,7 @@ void Interpreter::exec(const SQLStmt& s, Env& env) {
             std::string copy_sql = "COPY (" + built + ") TO '" + s.redirect_file +
                                    "' (FORMAT CSV, HEADER" + (s.append ? ", APPEND" : "") + ")";
             std::string err = dbExec(copy_sql);
+            for (auto& v : r.vars_to_reset) dbExec("RESET VARIABLE " + v);
             if (!err.empty())
                 std::cerr << red("error: ") << loc() << "export " << fn_name << "(): " << err << "\n";
             else if (verbose)
@@ -504,6 +606,7 @@ void Interpreter::exec(const SQLStmt& s, Env& env) {
         } else {
             duckdb_result res;
             std::string err = dbExec(built, &res);
+            for (auto& v : r.vars_to_reset) dbExec("RESET VARIABLE " + v);
             if (!err.empty())
                 std::cerr << red("error: ") << loc() << fn_name << "(): " << err << "\n";
             else

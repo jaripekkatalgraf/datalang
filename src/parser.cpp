@@ -51,6 +51,12 @@ std::vector<ASTPtr> Parser::parseBlock(int baseIndent) {
 // ====================== HELPERS ======================
 
 std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& append) {
+    // A SQL statement spans multiple lines until:
+    //   a) a line ends with a semicolon  → that line ends the statement
+    //   b) a Dabble keyword is encountered at the base indent → new statement
+    //   c) indentation drops below minIndent → end of block
+    // Single-line statements don't need a semicolon.
+    // Multi-line statements do — this is unambiguous and requires no heuristics.
     std::string sql;
     while (pos < (int)lines.size()) {
         int lvl = indentLevel(lines[pos]);
@@ -62,27 +68,54 @@ std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& 
             continue;
         }
 
+        // Dabble keywords always start a new statement
         if (t.rfind("let ", 0) == 0 || t.rfind("table ", 0) == 0 ||
             t.rfind("val ", 0) == 0 || t.rfind("scalar ", 0) == 0 ||
             t.rfind("for ", 0) == 0 || t.rfind("if ", 0) == 0 ||
-            t.rfind("while ", 0) == 0 || t.rfind("expect ", 0) == 0 || t.rfind("fn ", 0) == 0 ||
-            t.rfind("print ", 0) == 0 || t.rfind("import ", 0) == 0 || t.rfind("else", 0) == 0) {
+            t.rfind("while ", 0) == 0 || t.rfind("expect ", 0) == 0 ||
+            t.rfind("fn ", 0) == 0 || t.rfind("print ", 0) == 0 ||
+            t.rfind("import ", 0) == 0 || t.rfind("else", 0) == 0) {
             break;
         }
 
+        // Redirect operator ends the statement
         std::regex redir(R"(^(.*)\s*(>>|>)\s*([^\s>]+)\s*$)");
         std::smatch match;
         if (std::regex_match(t, match, redir)) {
-            sql += (sql.empty() ? "" : "\n") + match[1].str();
+            // Strip trailing semicolon from the SQL part if present
+            std::string sql_part = match[1].str();
+            if (!sql_part.empty() && sql_part.back() == ';') sql_part.pop_back();
+            sql += (sql.empty() ? "" : "\n") + sql_part;
             redirect_file = match[3].str();
             append = (match[2].str() == ">>");
             pos++;
             break;
         }
 
+        // If this is not the first line and we don't already have an open
+        // statement (no semicolon yet collected), only continue if we ARE
+        // already mid-statement (sql is non-empty and no semicolon ended it).
+        // A new same-indent line after a complete single-line statement
+        // is a new statement — we stop here and let parseBlock handle it.
+        if (!sql.empty()) {
+            std::string prev = trim(sql);
+            if (!prev.empty() && prev.back() != ';') {
+                // Still mid-statement — keep collecting.
+                // Nothing to do, fall through.
+            }
+        }
+
         if (!sql.empty()) sql += "\n";
         sql += lines[pos];
         pos++;
+
+        // Semicolon at end of line terminates this statement.
+        // Strip it — DuckDB doesn't need it and it avoids confusion.
+        std::string trimmed = trim(sql);
+        if (!trimmed.empty() && trimmed.back() == ';') {
+            sql = trimmed.substr(0, trimmed.size() - 1);
+            break;
+        }
     }
     return trim(sql);
 }

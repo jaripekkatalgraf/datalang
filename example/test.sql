@@ -1,10 +1,11 @@
 -- ================================================================
--- test.dl — full feature test for dabble
+-- test.dl — full feature test for datalang
 -- ================================================================
 -- Simulates a small sales pipeline:
 --   raw orders → cleaned → enriched → reported
 -- Covers: let, for, if/else, while, fn, expect, print, redirect
 -- ================================================================
+
 
 -- ----------------------------------------------------------------
 -- 1. SEED DATA
@@ -170,7 +171,7 @@ print '--- 7. while loop + val/scalar ---'
 val greeting   = 'hello'
 scalar version = 42
 
-print greeting || ' from dabble v' || version
+print greeting || ' from datalang v' || version
 
 -- val: scalar from SELECT (first cell)
 val order_count = COUNT(*) FROM orders
@@ -185,7 +186,7 @@ INSERT INTO tick VALUES (3);
 
 while (SELECT n > 0 FROM tick):
     print SELECT '  tick: ' || n FROM tick
-    UPDATE tick SET n = n - 1
+    UPDATE tick SET n = n - 1;
 
 print 'done counting'
 
@@ -245,7 +246,38 @@ print SELECT
 
 
 -- ----------------------------------------------------------------
--- 10. COLOR SMOKE TEST
+-- 10. FUNCTION PARAMETERS
+-- ----------------------------------------------------------------
+
+print '--- 10. function parameters ---'
+
+fn orders_by_status(status, min_qty):
+    let filtered = SELECT o.*, p.name AS product_name, p.price
+        FROM orders o JOIN products p ON p.id = o.product_id
+        WHERE o.status = status AND o.qty >= min_qty
+    SELECT product_name, qty, qty * price AS total
+    FROM filtered
+    ORDER BY total DESC
+
+-- Materialise with args
+let big_paid = orders_by_status('paid', 3)
+print SELECT 'big paid orders: ' || COUNT(*) FROM big_paid
+big_paid;
+
+-- Call with different args, print directly
+orders_by_status('refunded', 1)
+
+-- Args can be expressions or outer-scope scalars
+val min_qty = 2
+let medium_paid = orders_by_status('paid', min_qty)
+print SELECT 'medium paid orders: ' || COUNT(*) FROM medium_paid
+
+-- Arity error
+-- orders_by_status('paid')
+
+
+-- ----------------------------------------------------------------
+-- 11. COLOR SMOKE TEST
 -- This section deliberately fires a warn and then a fail.
 -- Remove once you have verified colors look right.
 -- ----------------------------------------------------------------

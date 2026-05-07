@@ -276,6 +276,41 @@ expect (MAX(created_at) > CURRENT_DATE - INTERVAL 1 DAY FROM events)
 
 ---
 
+### Statement termination
+
+Multi-line SQL statements at the top level need a semicolon to signal the end. Inside `let`, `val`, or `fn` bodies, indentation handles this automatically — no semicolons needed.
+
+```sql
+-- Top level: semicolon required when followed by another raw statement
+INSERT INTO log VALUES (now(), 'ran');
+SELECT * FROM log;
+
+-- Single statement followed by a Dabble keyword: semicolon optional
+SELECT * FROM summary
+
+let next = SELECT 1   -- Dabble keyword terminates the SELECT above
+
+-- let/fn bodies: indentation terminates, no semicolons needed
+let report =
+    SELECT o.*, p.name
+    FROM orders o
+    JOIN products p ON p.id = o.product_id
+    WHERE o.status = 'paid'
+```
+
+---
+
+### Bare table name
+
+A plain identifier on its own line prints the full table — shorthand for `SELECT * FROM name`:
+
+```sql
+let result = orders_by_status('paid', 3)
+result       -- prints SELECT * FROM result
+```
+
+---
+
 ### Print — `print`
 
 Prints a string, evaluates an expression, or renders a full result set. Multi-line works with indentation.
@@ -311,17 +346,6 @@ Runs another `.sql` file in the current context. Paths resolve relative to the i
 ```sql
 import "lib/helpers.sql"
 import "setup.sql"
-```
-
----
-
-### Persistent Data
-
-Just add attach. Dabble support what Duckdb spports.
-
-```sql
-ATTACH 'test.duckdb' as my_db;
-USE my_db;
 ```
 
 ---
@@ -424,7 +448,8 @@ A few things worth noticing:
 
 - [ ] Function parameters
 - [ ] Better indentation handling (currently hardcoded 4 spaces)
-- [ ] `return` keyword for early exit from functions (return is currently last select statement)
+- [ ] `return` keyword for early exit from functions
+- [ ] Persistent database support (currently in-memory only)
 - [ ] Package/module system beyond `import`
 
 ---

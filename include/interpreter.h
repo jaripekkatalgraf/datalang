@@ -11,6 +11,7 @@
 struct FnResult {
     std::vector<std::pair<std::string,std::string>> ctes;  // name → sql
     std::string select;
+    std::vector<std::string> vars_to_reset;  // param variables — reset AFTER caller materializes
 
     // Build a single self-contained SQL string: WITH ... SELECT ...
     std::string build() const {
@@ -43,7 +44,7 @@ private:
     using Env = std::unordered_map<std::string,std::string>;
 
     void execBlock(const std::vector<ASTPtr>& block, Env env);
-    FnResult execFn(const FnStmt& fn, Env env);
+    FnResult execFn(const FnStmt& fn, Env env, const std::vector<std::string>& args = {});
 
     void exec(const LetStmt& s, Env& env);
     void exec(const ValStmt& s, Env& env);
@@ -57,7 +58,7 @@ private:
     void exec(const ImportStmt& s, Env& env);
 
     bool evalCond(std::string cond, Env& env);
-    bool isFunctionCall(const std::string& sql, std::string& fn_name);
+    bool isFunctionCall(const std::string& sql, std::string& fn_name, std::vector<std::string>& args);
     void printResult(duckdb_result* res);
 
     // Apply env substitution + env var expansion in one call
