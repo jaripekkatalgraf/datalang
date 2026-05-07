@@ -1,5 +1,5 @@
 -- ================================================================
--- test.dl — full feature test for datalang
+-- test.dl — full feature test for dabble
 -- ================================================================
 -- Simulates a small sales pipeline:
 --   raw orders → cleaned → enriched → reported
@@ -150,12 +150,12 @@ print '--- 6. business health check ---'
 let total_revenue = SELECT SUM(qty * price) AS rev FROM paid_orders
 let pending_count = SELECT COUNT(*) AS cnt FROM orders WHERE status = 'pending'
 
-if (SELECT rev > 500 FROM total_revenue):
+if (rev > 500 FROM total_revenue):
     print 'Revenue target hit'
 else:
     print 'Revenue below target'
 
-if (SELECT cnt > 0 FROM pending_count):
+if (cnt > 0 FROM pending_count):
     print SELECT 'WARNING: ' || cnt || ' pending orders need attention' FROM pending_count
 else:
     print 'No pending orders'
@@ -165,19 +165,35 @@ else:
 -- 7. WHILE LOOP — compute a running rank manually
 -- ----------------------------------------------------------------
 
-print '--- 7. while loop ---'
+print '--- 7. while loop + val/scalar ---'
 
-CREATE TABLE ranked (rank INTEGER, customer VARCHAR, total_spent DECIMAL(10,2));
+-- val: literal scalar
+val greeting   = 'hello'
+scalar version = 42
 
-let rank_source = SELECT customer, total_spent FROM customers ORDER BY total_spent DESC
+print greeting || ' from dabble v' || version
 
--- Insert with row_number via DuckDB window function instead
-INSERT INTO ranked
-    SELECT ROW_NUMBER() OVER (ORDER BY total_spent DESC), customer, total_spent
-    FROM (SELECT customer, total_spent FROM customers)
+-- val: scalar from SELECT (first cell)
+val order_count = COUNT(*) FROM orders
+val max_spend   = MAX(total_spent) FROM customers
 
-for r in ranked:
-    print SELECT '  #' || {{r.rank}} || ' ' || '{{r.customer}}' || ' — $' || ROUND({{r.total_spent}}, 2)
+print 'total orders : ' || order_count
+print 'top customer : $' || max_spend
+
+-- while: count down using a single-row table + UPDATE
+CREATE TEMP TABLE tick (n INTEGER);
+INSERT INTO tick VALUES (3);
+
+while (SELECT n > 0 FROM tick):
+    print SELECT '  tick: ' || n FROM tick
+    UPDATE tick SET n = n - 1
+
+print 'done counting'
+
+-- val inside a for loop (scoped to each iteration)
+for c in customers:
+    val label = '{{c.customer}}' || ' (' || UPPER('{{c.customer}}') || ')'
+    print '  ' || label
 
 
 -- ----------------------------------------------------------------

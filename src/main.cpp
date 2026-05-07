@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     }
 
     if (!file) {
-        std::cout << "Usage: ./datalang [--verbose] <file.sql>\n";
+        std::cout << "Usage: ./dabble [--verbose] <file.sql>\n";
         return 1;
     }
 

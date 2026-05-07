@@ -33,6 +33,9 @@ std::vector<ASTPtr> Parser::parseBlock(int baseIndent) {
         }
 
         if (t.rfind("let ", 0) == 0)         block.push_back(parseLet(baseIndent));
+        else if (t.rfind("table ", 0) == 0)  block.push_back(parseLet(baseIndent));
+        else if (t.rfind("val ", 0) == 0)    block.push_back(parseVal(baseIndent));
+        else if (t.rfind("scalar ", 0) == 0) block.push_back(parseVal(baseIndent));
         else if (t.rfind("for ", 0) == 0)    block.push_back(parseFor(baseIndent));
         else if (t.rfind("if ", 0) == 0)     block.push_back(parseIf(baseIndent));
         else if (t.rfind("while ", 0) == 0)  block.push_back(parseWhile(baseIndent));
@@ -59,7 +62,9 @@ std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& 
             continue;
         }
 
-        if (t.rfind("let ", 0) == 0 || t.rfind("for ", 0) == 0 || t.rfind("if ", 0) == 0 ||
+        if (t.rfind("let ", 0) == 0 || t.rfind("table ", 0) == 0 ||
+            t.rfind("val ", 0) == 0 || t.rfind("scalar ", 0) == 0 ||
+            t.rfind("for ", 0) == 0 || t.rfind("if ", 0) == 0 ||
             t.rfind("while ", 0) == 0 || t.rfind("expect ", 0) == 0 || t.rfind("fn ", 0) == 0 ||
             t.rfind("print ", 0) == 0 || t.rfind("import ", 0) == 0 || t.rfind("else", 0) == 0) {
             break;
@@ -85,16 +90,20 @@ std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& 
 // ====================== INDIVIDUAL PARSERS ======================
 
 ASTPtr Parser::parseRawSQL(int baseIndent) {
+    int ln = pos + 1;
     std::string redirect_file;
     bool append = false;
     std::string sql = collectSQL(baseIndent, redirect_file, append);
-    return std::make_shared<ASTNode>(SQLStmt{sql, redirect_file, append});
+    return std::make_shared<ASTNode>(SQLStmt{sql, redirect_file, append}, ln);
 }
 
 ASTPtr Parser::parseLet(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     auto eq = line.find('=');
-    std::string name = trim(line.substr(4, eq - 4));
+    // "let name = ..." prefix is 4 chars; "table name = ..." prefix is 6 chars
+    int prefix = (line.rfind("table ", 0) == 0) ? 6 : 4;
+    std::string name = trim(line.substr(prefix, eq - prefix));
     std::string sql = trim(line.substr(eq + 1));
 
     pos++;
@@ -104,10 +113,30 @@ ASTPtr Parser::parseLet(int baseIndent) {
         if (!sql.empty()) sql += "\n";
         sql += more;
     }
-    return std::make_shared<ASTNode>(LetStmt{name, sql});
+    return std::make_shared<ASTNode>(LetStmt{name, sql}, ln);
+}
+ASTPtr Parser::parseVal(int baseIndent) {
+    int ln = pos + 1;
+    std::string line = trim(lines[pos]);
+    auto eq = line.find('=');
+    // "val name = ..." prefix is 4; "scalar name = ..." prefix is 7
+    int prefix = (line.rfind("scalar ", 0) == 0) ? 7 : 4;
+    std::string name = trim(line.substr(prefix, eq - prefix));
+    std::string expr = trim(line.substr(eq + 1));
+
+    pos++;
+    // Collect multi-line continuation (same rule as let)
+    std::string redirect; bool app = false;
+    std::string more = collectSQL(baseIndent + 4, redirect, app);
+    if (!more.empty()) {
+        if (!expr.empty()) expr += "\n";
+        expr += more;
+    }
+    return std::make_shared<ASTNode>(ValStmt{name, expr}, ln);
 }
 
 ASTPtr Parser::parseFor(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     auto inpos = line.find(" in ");
     std::string var = trim(line.substr(4, inpos - 4));
@@ -115,10 +144,11 @@ ASTPtr Parser::parseFor(int baseIndent) {
 
     pos++;
     auto body = parseBlock(baseIndent + 4);
-    return std::make_shared<ASTNode>(ForStmt{var, src, body});
+    return std::make_shared<ASTNode>(ForStmt{var, src, body}, ln);
 }
 
 ASTPtr Parser::parseIf(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     auto l = line.find('(');
     auto r = line.rfind(')');
@@ -138,10 +168,11 @@ ASTPtr Parser::parseIf(int baseIndent) {
             elseb = parseBlock(baseIndent + 4);
         }
     }
-    return std::make_shared<ASTNode>(IfStmt{cond, thenb, elseb});
+    return std::make_shared<ASTNode>(IfStmt{cond, thenb, elseb}, ln);
 }
 
 ASTPtr Parser::parseWhile(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     auto l = line.find('(');
     auto r = line.rfind(')');
@@ -150,10 +181,11 @@ ASTPtr Parser::parseWhile(int baseIndent) {
 
     pos++;
     auto body = parseBlock(baseIndent + 4);
-    return std::make_shared<ASTNode>(WhileStmt{cond, body});
+    return std::make_shared<ASTNode>(WhileStmt{cond, body}, ln);
 }
 
 ASTPtr Parser::parseExpect(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     auto l = line.find('(');
     auto r = line.rfind(')');
@@ -177,10 +209,11 @@ ASTPtr Parser::parseExpect(int baseIndent) {
     }
 
     pos++;
-    return std::make_shared<ASTNode>(ExpectStmt{cond, action, msg});
+    return std::make_shared<ASTNode>(ExpectStmt{cond, action, msg}, ln);
 }
 
 ASTPtr Parser::parseFn(int baseIndent) {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     size_t l = line.find('(');
     size_t r = line.rfind(')');
@@ -198,10 +231,11 @@ ASTPtr Parser::parseFn(int baseIndent) {
     pos++;
     auto body = parseBlock(baseIndent + 4);
 
-    return std::make_shared<ASTNode>(FnStmt{name, params, body, ""});
+    return std::make_shared<ASTNode>(FnStmt{name, params, body, ""}, ln);
 }
 
 ASTPtr Parser::parsePrint() {
+    int ln = pos + 1;
     std::string line = lines[pos];
     int base_indent = indentLevel(line);
     size_t print_pos = line.find("print ");
@@ -240,15 +274,16 @@ ASTPtr Parser::parsePrint() {
         text = text.substr(1, text.length() - 2);
     }
 
-    return std::make_shared<ASTNode>(PrintStmt{text});
+    return std::make_shared<ASTNode>(PrintStmt{text}, ln);
 }
 
 ASTPtr Parser::parseImport() {
+    int ln = pos + 1;
     std::string line = trim(lines[pos]);
     size_t start = line.find('"');
     size_t end = line.rfind('"');
     std::string filename = (start != std::string::npos && end > start)
                          ? line.substr(start + 1, end - start - 1) : "";
     pos++;
-    return std::make_shared<ASTNode>(ImportStmt{filename});
+    return std::make_shared<ASTNode>(ImportStmt{filename}, ln);
 }

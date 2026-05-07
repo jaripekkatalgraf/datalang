@@ -42,7 +42,7 @@ std::string replaceAll(std::string s, const std::unordered_map<std::string,std::
     for (const auto& [k, v] : env) {
         size_t pos = 0;
         while ((pos = s.find(k, pos)) != std::string::npos) {
-            bool left_ok = (pos == 0) || !std::isalnum(s[pos - 1]);
+            bool left_ok = (pos == 0) || (!std::isalnum(s[pos - 1]) && s[pos - 1] != '.');
             bool right_ok = (pos + k.size() == s.size()) || !std::isalnum(s[pos + k.size()]);
 
             if (left_ok && right_ok) {

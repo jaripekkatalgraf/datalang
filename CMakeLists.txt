@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(datalang LANGUAGES CXX)
+project(dabble LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,24 +23,24 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(duckdb)
 
-# ==================== datalang ====================
-add_executable(datalang
+# ==================== dabble ====================
+add_executable(dabble
     src/main.cpp
     src/parser.cpp
     src/interpreter.cpp
     src/utils.cpp
 )
 
-target_include_directories(datalang PRIVATE
+target_include_directories(dabble PRIVATE
     ${duckdb_SOURCE_DIR}
     include
 )
 
 # Use platform-appropriate extension (.so on Linux, .dylib on macOS)
 set(DUCKDB_LIB "${duckdb_SOURCE_DIR}/libduckdb${CMAKE_SHARED_LIBRARY_SUFFIX}")
-target_link_libraries(datalang PRIVATE ${DUCKDB_LIB})
+target_link_libraries(dabble PRIVATE ${DUCKDB_LIB})
 
-set_target_properties(datalang PROPERTIES
+set_target_properties(dabble PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

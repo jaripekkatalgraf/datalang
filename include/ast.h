@@ -8,6 +8,7 @@ struct ASTNode;
 using ASTPtr = std::shared_ptr<ASTNode>;
 
 struct LetStmt    { std::string name, sql; };
+struct ValStmt    { std::string name, expr; };  // scalar: stores first cell in env
 struct ForStmt    { std::string var, source; std::vector<ASTPtr> body; };
 struct IfStmt     { std::string cond; std::vector<ASTPtr> thenb, elseb; };
 struct WhileStmt  { std::string cond; std::vector<ASTPtr> body; };
@@ -18,8 +19,10 @@ struct PrintStmt  { std::string text; };
 struct ImportStmt { std::string filename; };
 
 struct ASTNode {
-    std::variant<LetStmt, ForStmt, IfStmt, WhileStmt, ExpectStmt, FnStmt, SQLStmt, PrintStmt, ImportStmt> node;
-    
+    std::variant<LetStmt, ValStmt, ForStmt, IfStmt, WhileStmt, ExpectStmt,
+                 FnStmt, SQLStmt, PrintStmt, ImportStmt> node;
+    int line_no = 0;
+
     template<typename T>
-    ASTNode(T&& n) : node(std::forward<T>(n)) {}
+    ASTNode(T&& n, int line = 0) : node(std::forward<T>(n)), line_no(line) {}
 };

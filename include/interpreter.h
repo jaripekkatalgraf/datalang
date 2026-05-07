@@ -28,8 +28,11 @@ struct FnResult {
 class Interpreter {
     duckdb_connection conn;
     bool verbose;
-    std::unordered_map<std::string, FnStmt> functions;  // moved from global
-    std::vector<std::string> file_stack;                   // for relative import resolution
+    std::unordered_map<std::string, FnStmt> functions;
+    std::vector<std::string> file_stack;   // for relative import resolution
+    int current_line = 0;                  // updated in execBlock, used in errors
+    int fn_depth = 0;                          // incremented on each execFn entry
+    std::vector<std::vector<std::string>> val_scopes = {{}};  // per-scope list of __val_ tables to drop on exit
 
 public:
     Interpreter(duckdb_connection c, bool verbose = false);
@@ -43,6 +46,7 @@ private:
     FnResult execFn(const FnStmt& fn, Env env);
 
     void exec(const LetStmt& s, Env& env);
+    void exec(const ValStmt& s, Env& env);
     void exec(const ForStmt& s, Env& env);
     void exec(const IfStmt& s, Env& env);
     void exec(const WhileStmt& s, Env& env);
@@ -58,4 +62,12 @@ private:
 
     // Apply env substitution + env var expansion in one call
     std::string resolve(const std::string& sql, const Env& env);
+
+    // Format "filename:line: " prefix for error messages.
+    // Works for both the root script and imported files.
+    std::string loc() const;
+
+    // Run a DuckDB query and return the error string on failure, "" on success.
+    // Always pass a result so we can retrieve the error message.
+    std::string dbExec(const std::string& sql, duckdb_result* res = nullptr);
 };

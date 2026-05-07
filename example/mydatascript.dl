@@ -1,7 +1,0 @@
-let files = SELECT * FROM (VALUES 
-    (1, '2021/05/currency', 10), 
-    (2, '2024/11/language', 20)) 
-    files(id, name, howmany);
-
-for f in files:
-    SELECT * FROM read_csv('https://cdn.wsform.com/wp-content/uploads/{{f.name}}.csv') LIMIT f.howmany

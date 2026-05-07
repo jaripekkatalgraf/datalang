@@ -13,7 +13,8 @@ public:
 
 private:
     std::string collectSQL(int minIndent, std::string& redirect_file, bool& append);
-    ASTPtr parseLet(int baseIndent);
+    ASTPtr parseLet(int baseIndent);    // let / table  → temp table
+    ASTPtr parseVal(int baseIndent);    // val / scalar → env string
     ASTPtr parseFor(int baseIndent);
     ASTPtr parseIf(int baseIndent);
     ASTPtr parseWhile(int baseIndent);
