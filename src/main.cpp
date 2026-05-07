@@ -6,26 +6,45 @@
 #include <sstream>
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << "Usage: ./datalang file.dl\n";
+    bool verbose = false;
+    const char* file = nullptr;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--verbose" || arg == "-v") {
+            verbose = true;
+        } else if (!file) {
+            file = argv[i];
+        }
+    }
+
+    if (!file) {
+        std::cout << "Usage: ./datalang [--verbose] <file.sql>\n";
         return 1;
     }
 
-    std::ifstream f(argv[1]);
-    std::stringstream buf; 
+    std::ifstream f(file);
+    if (!f) {
+        std::cerr << "Cannot open file: " << file << "\n";
+        return 1;
+    }
+
+    std::stringstream buf;
     buf << f.rdbuf();
 
-    duckdb_database db; 
+    duckdb_database db;
     duckdb_connection conn;
-    check(duckdb_open(nullptr, &db), "open");
+    check(duckdb_open(nullptr, &db), "open db");
     check(duckdb_connect(db, &conn), "connect");
 
     Parser parser(buf.str());
     auto ast = parser.parseBlock();
 
-    Interpreter interp(conn);
-    interp.run(ast);
+    Interpreter interp(conn, verbose);
+    interp.run(ast, file);
 
     duckdb_disconnect(&conn);
     duckdb_close(&db);
+
+    return 0;
 }

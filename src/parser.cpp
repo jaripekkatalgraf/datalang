@@ -12,7 +12,8 @@ Parser::Parser(const std::string& src) {
     }
 }
 
-// ====================== parseBlock (more robust) ======================
+// ====================== MAIN PARSER ======================
+
 std::vector<ASTPtr> Parser::parseBlock(int baseIndent) {
     std::vector<ASTPtr> block;
 
@@ -21,36 +22,30 @@ std::vector<ASTPtr> Parser::parseBlock(int baseIndent) {
         if (lvl < baseIndent) break;
 
         std::string t = trim(lines[pos]);
-
-        if (t.empty() || t[0] == '#' || t.rfind("--", 0) == 0) {
+        if (t.empty() || t.rfind("--", 0) == 0) {
             pos++;
             continue;
         }
 
         if (lvl > baseIndent) {
-            std::cerr << "Indentation error at line " << (pos+1) << "\n";
+            std::cerr << "Indentation error at line " << (pos + 1) << "\n";
             std::exit(1);
         }
 
-        // === KEY CHANGE: always check keywords first ===
-        if (t.rfind("let ", 0) == 0) {
-            block.push_back(parseLet(baseIndent));
-        } else if (t.rfind("for ", 0) == 0) {
-            block.push_back(parseFor(baseIndent));
-        } else if (t.rfind("if ", 0) == 0) {
-            block.push_back(parseIf(baseIndent));
-        } else if (t.rfind("print ", 0) == 0) {
-            block.push_back(parsePrint());
-        } else if (t.rfind("import ", 0) == 0) {
-            block.push_back(parseImport());
-        } else {
-            block.push_back(parseRawSQL(baseIndent));
-        }
-
-        // Do NOT increment pos here — the parseXXX functions already do it
+        if (t.rfind("let ", 0) == 0)         block.push_back(parseLet(baseIndent));
+        else if (t.rfind("for ", 0) == 0)    block.push_back(parseFor(baseIndent));
+        else if (t.rfind("if ", 0) == 0)     block.push_back(parseIf(baseIndent));
+        else if (t.rfind("while ", 0) == 0)  block.push_back(parseWhile(baseIndent));
+        else if (t.rfind("expect ", 0) == 0) block.push_back(parseExpect(baseIndent));
+        else if (t.rfind("fn ", 0) == 0)     block.push_back(parseFn(baseIndent));
+        else if (t.rfind("print ", 0) == 0)  block.push_back(parsePrint());
+        else if (t.rfind("import ", 0) == 0) block.push_back(parseImport());
+        else                                 block.push_back(parseRawSQL(baseIndent));
     }
     return block;
 }
+
+// ====================== HELPERS ======================
 
 std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& append) {
     std::string sql;
@@ -59,18 +54,17 @@ std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& 
         if (lvl < minIndent) break;
 
         std::string t = trim(lines[pos]);
-        if (t.empty() || t[0] == '#' || t.rfind("--", 0) == 0) {
-            pos++; 
+        if (t.empty() || t.rfind("--", 0) == 0) {
+            pos++;
             continue;
         }
 
-        if (t.rfind("let ", 0) == 0 || t.rfind("for ", 0) == 0 || 
-            t.rfind("if ", 0) == 0 || t.rfind("print ", 0) == 0 || 
-            t.rfind("import ", 0) == 0 || t.rfind("else", 0) == 0) {
+        if (t.rfind("let ", 0) == 0 || t.rfind("for ", 0) == 0 || t.rfind("if ", 0) == 0 ||
+            t.rfind("while ", 0) == 0 || t.rfind("expect ", 0) == 0 || t.rfind("fn ", 0) == 0 ||
+            t.rfind("print ", 0) == 0 || t.rfind("import ", 0) == 0 || t.rfind("else", 0) == 0) {
             break;
         }
 
-        // redirection...
         std::regex redir(R"(^(.*)\s*(>>|>)\s*([^\s>]+)\s*$)");
         std::smatch match;
         if (std::regex_match(t, match, redir)) {
@@ -87,6 +81,8 @@ std::string Parser::collectSQL(int minIndent, std::string& redirect_file, bool& 
     }
     return trim(sql);
 }
+
+// ====================== INDIVIDUAL PARSERS ======================
 
 ASTPtr Parser::parseRawSQL(int baseIndent) {
     std::string redirect_file;
@@ -124,14 +120,12 @@ ASTPtr Parser::parseFor(int baseIndent) {
 
 ASTPtr Parser::parseIf(int baseIndent) {
     std::string line = trim(lines[pos]);
-    size_t l = line.find('(');
-    size_t r = line.rfind(')');
-    std::string cond = (l != std::string::npos && r != std::string::npos) 
-                       ? line.substr(l + 1, r - l - 1) 
-                       : line.substr(3);   // fallback
+    auto l = line.find('(');
+    auto r = line.rfind(')');
+    std::string cond = (l != std::string::npos && r != std::string::npos)
+                     ? line.substr(l + 1, r - l - 1) : "";
 
-    pos++;  // consume the if line
-
+    pos++;
     auto thenb = parseBlock(baseIndent + 4);
 
     std::vector<ASTPtr> elseb;
@@ -147,9 +141,105 @@ ASTPtr Parser::parseIf(int baseIndent) {
     return std::make_shared<ASTNode>(IfStmt{cond, thenb, elseb});
 }
 
-ASTPtr Parser::parsePrint() {
-    std::string text = trim(lines[pos].substr(6));
+ASTPtr Parser::parseWhile(int baseIndent) {
+    std::string line = trim(lines[pos]);
+    auto l = line.find('(');
+    auto r = line.rfind(')');
+    std::string cond = (l != std::string::npos && r != std::string::npos)
+                     ? line.substr(l + 1, r - l - 1) : "";
+
     pos++;
+    auto body = parseBlock(baseIndent + 4);
+    return std::make_shared<ASTNode>(WhileStmt{cond, body});
+}
+
+ASTPtr Parser::parseExpect(int baseIndent) {
+    std::string line = trim(lines[pos]);
+    auto l = line.find('(');
+    auto r = line.rfind(')');
+    std::string cond = (l != std::string::npos && r != std::string::npos)
+                     ? line.substr(l + 1, r - l - 1) : "";
+
+    std::string action = "fail";
+    std::string msg = "";
+
+    size_t else_pos = line.find("else ");
+    if (else_pos != std::string::npos) {
+        std::string rest = line.substr(else_pos + 5);
+        if (rest.find("warn") != std::string::npos) action = "warn";
+        if (rest.find("fail") != std::string::npos) action = "fail";
+
+        size_t q1 = rest.find('\'');
+        size_t q2 = rest.rfind('\'');
+        if (q1 != std::string::npos && q2 > q1) {
+            msg = rest.substr(q1 + 1, q2 - q1 - 1);
+        }
+    }
+
+    pos++;
+    return std::make_shared<ASTNode>(ExpectStmt{cond, action, msg});
+}
+
+ASTPtr Parser::parseFn(int baseIndent) {
+    std::string line = trim(lines[pos]);
+    size_t l = line.find('(');
+    size_t r = line.rfind(')');
+    std::string name = trim(line.substr(3, l - 3));
+    std::string params_str = (l != std::string::npos && r != std::string::npos)
+                           ? line.substr(l + 1, r - l - 1) : "";
+
+    std::vector<std::string> params;
+    std::stringstream ss(params_str);
+    std::string p;
+    while (std::getline(ss, p, ',')) {
+        params.push_back(trim(p));
+    }
+
+    pos++;
+    auto body = parseBlock(baseIndent + 4);
+
+    return std::make_shared<ASTNode>(FnStmt{name, params, body, ""});
+}
+
+ASTPtr Parser::parsePrint() {
+    std::string line = lines[pos];
+    int base_indent = indentLevel(line);
+    size_t print_pos = line.find("print ");
+    std::string text = (print_pos != std::string::npos)
+                     ? trim(line.substr(print_pos + 6))
+                     : "";
+    pos++;
+
+    // Collect continuation lines that are indented deeper than the print keyword.
+    // This lets SQL queries (and string concatenations) span multiple lines naturally:
+    //
+    //   print SELECT 'total: ' || COUNT(*)
+    //       FROM orders
+    //       WHERE status = 'paid'
+    //
+    // Lines at the same or shallower indent end the print expression.
+    while (pos < (int)lines.size()) {
+        int lvl = indentLevel(lines[pos]);
+        if (lvl <= base_indent) break;
+        std::string t = trim(lines[pos]);
+        if (!t.empty() && t.rfind("--", 0) != 0) {
+            text += " " + t;
+        }
+        pos++;
+    }
+
+    text = trim(text);
+    if (!text.empty() && text.back() == ';') text.pop_back();
+    text = trim(text);
+
+    // Strip surrounding quotes for plain string literals.
+    // Don't strip when it's a SQL expression — quotes there are part of the SQL.
+    if (text.length() >= 2 &&
+        ((text.front() == '\'' && text.back() == '\'') ||
+         (text.front() == '"' && text.back() == '"'))) {
+        text = text.substr(1, text.length() - 2);
+    }
+
     return std::make_shared<ASTNode>(PrintStmt{text});
 }
 

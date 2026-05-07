@@ -16,6 +16,9 @@ private:
     ASTPtr parseLet(int baseIndent);
     ASTPtr parseFor(int baseIndent);
     ASTPtr parseIf(int baseIndent);
+    ASTPtr parseWhile(int baseIndent);
+    ASTPtr parseExpect(int baseIndent);
+    ASTPtr parseFn(int baseIndent);
     ASTPtr parsePrint();
     ASTPtr parseImport();
     ASTPtr parseRawSQL(int baseIndent);

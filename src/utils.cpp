@@ -1,8 +1,7 @@
 #include "utils.h"
 #include <iostream>
-#include <algorithm>
-#include <unordered_map>
-#include <string>
+#include <cctype>
+#include <regex>
 
 void check(duckdb_state s, const char* msg) {
     if (s == DuckDBError) {
@@ -28,46 +27,47 @@ int indentLevel(const std::string& line) {
     return c;
 }
 
-std::string replaceAll(std::string s, const std::unordered_map<std::string, std::string>& env) {
-    for (const auto& [key, value] : env) {
-        // 1. Explicit {{f.name}} style - always safe and preferred
-        {
-            std::string placeholder = "{{" + key + "}}";
-            size_t pos = 0;
-            while ((pos = s.find(placeholder, pos)) != std::string::npos) {
-                s.replace(pos, placeholder.size(), value);
-                pos += value.size();
-            }
-        }
-
-        // 2. Shorthand `f.name` with better boundaries
+std::string replaceAll(std::string s, const std::unordered_map<std::string,std::string>& env) {
+    // Explicit {{var.col}} style
+    for (const auto& [k, v] : env) {
+        std::string placeholder = "{{" + k + "}}";
         size_t pos = 0;
-        while ((pos = s.find(key, pos)) != std::string::npos) {
-            bool should_replace = true;
+        while ((pos = s.find(placeholder, pos)) != std::string::npos) {
+            s.replace(pos, placeholder.size(), v);
+            pos += v.size();
+        }
+    }
 
-            // Check left boundary
-            if (pos > 0) {
-                char left = s[pos - 1];
-                if (std::isalnum(left) || left == '_' || left == '.') {
-                    should_replace = false;
-                }
-            }
+    // Shorthand f.name with boundaries
+    for (const auto& [k, v] : env) {
+        size_t pos = 0;
+        while ((pos = s.find(k, pos)) != std::string::npos) {
+            bool left_ok = (pos == 0) || !std::isalnum(s[pos - 1]);
+            bool right_ok = (pos + k.size() == s.size()) || !std::isalnum(s[pos + k.size()]);
 
-            // Check right boundary
-            if (pos + key.size() < s.size()) {
-                char right = s[pos + key.size()];
-                if (std::isalnum(right) || right == '_' || right == '.') {
-                    should_replace = false;
-                }
-            }
-
-            if (should_replace) {
-                s.replace(pos, key.size(), value);
-                pos += value.size();
+            if (left_ok && right_ok) {
+                s.replace(pos, k.size(), v);
+                pos += v.size();
             } else {
-                pos += key.size();
+                pos += k.size();
             }
         }
+    }
+    return s;
+}
+
+std::string replaceEnvVars(const std::string& input) {
+    std::string s = input;
+    std::regex env_pattern(R"(env\.([A-Za-z_][A-Za-z0-9_]*))");
+    std::smatch match;
+    size_t pos = 0;
+
+    while (std::regex_search(s.cbegin() + pos, s.cend(), match, env_pattern)) {
+        std::string var = match[1].str();
+        const char* val = std::getenv(var.c_str());
+        std::string replacement = val ? val : "";
+        s.replace(pos + match.position(0), match.length(0), replacement);
+        pos += match.position(0) + replacement.size();
     }
     return s;
 }
