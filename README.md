@@ -350,6 +350,17 @@ import "setup.sql"
 
 ---
 
+### Persistent Data
+
+Just add attach. Dabble support what Duckdb spports.
+
+```sql
+ATTACH 'test.duckdb' as my_db;
+USE my_db;
+```
+
+---
+
 ## How it works
 
 Dabble compiles your script to an AST, then walks it. Each statement is either:
@@ -446,10 +457,8 @@ A few things worth noticing:
 
 ## Roadmap / known gaps
 
-- [ ] Function parameters
 - [ ] Better indentation handling (currently hardcoded 4 spaces)
-- [ ] `return` keyword for early exit from functions
-- [ ] Persistent database support (currently in-memory only)
+- [ ] `return` keyword for early exit from functions (return is currently last select statement)
 - [ ] Package/module system beyond `import`
 
 ---
